@@ -172,7 +172,7 @@ def augment_with_medication_classes(df, med_class_table):
     return df
 
 
-def build_pipeline():
+def build_pipeline(df):
     numeric_features = [
         'age_years', 'time_in_hospital', 'num_lab_procedures', 'num_procedures',
         'num_medications', 'number_outpatient', 'number_emergency', 'number_inpatient',
@@ -180,20 +180,28 @@ def build_pipeline():
     ]
     categorical_features = ['race', 'gender', 'payer_code', 'medical_specialty']
 
-    numeric_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='median')),
-        ('scaler', StandardScaler())
-    ])
+    numeric_features = [f for f in numeric_features if f in df.columns]
+    categorical_features = [f for f in categorical_features if f in df.columns]
 
-    categorical_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='constant', fill_value='unknown')),
-        ('onehot', OneHotEncoder(handle_unknown='ignore'))
-    ])
+    transformers = []
+    if numeric_features:
+        numeric_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+        transformers.append(('num', numeric_transformer, numeric_features))
 
-    preprocessor = ColumnTransformer(transformers=[
-        ('num', numeric_transformer, numeric_features),
-        ('cat', categorical_transformer, categorical_features)
-    ])
+    if categorical_features:
+        categorical_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='constant', fill_value='unknown')),
+            ('onehot', OneHotEncoder(handle_unknown='ignore'))
+        ])
+        transformers.append(('cat', categorical_transformer, categorical_features))
+
+    if not transformers:
+        raise ValueError('No valid feature columns available for pipeline construction.')
+
+    preprocessor = ColumnTransformer(transformers=transformers, remainder='drop')
 
     pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
@@ -211,13 +219,16 @@ def train_readmission_model(df):
     features += [c for c in df.columns if c.endswith('_count')]
     features = [f for f in features if f in df.columns]
 
+    if 'readmitted_30' not in df.columns:
+        raise ValueError('Target column readmitted_30 not found in dataframe.')
+
     df = df.dropna(subset=features + ['readmitted_30'])
     X = df[features]
     y = df['readmitted_30']
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    pipeline = build_pipeline()
+    pipeline = build_pipeline(X_train)
     param_grid = {
         'classifier__C': [0.1, 1.0, 10.0],
         'classifier__penalty': ['l2']
